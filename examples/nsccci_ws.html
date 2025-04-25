@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Talking Head - minimal example with API</title>
+
+  <style>
+    body, html { width:100%; height:100%; max-width: 800px; margin: auto; position: relative; background-color: #202020; color: white; }
+    #background {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 80%; /* Same height as avatar */
+      background-image: url('test_nsccci_bg.jpg'); /* Replace with your image path */
+      background-size: cover;
+      background-position: center;
+      z-index: 1; /* Lower z-index to place behind avatar */
+    }
+    #avatar { 
+      display: block; 
+      width:100%; 
+      height:80%; 
+      position: relative;
+      z-index: 2; /* Higher z-index to place in front of background */
+    }
+    #loading { display: block; position: absolute; bottom: 10px; left: 10px; right: 10px; height: 50px; font-family: Arial; font-size: 20px; }
+    #console { 
+      display: block; 
+      width: 100%; 
+      height: 20%; 
+      background-color: #101010; 
+      color: #00ff00; 
+      font-family: monospace; 
+      overflow-y: auto; 
+      padding: 10px;
+      box-sizing: border-box;
+      border-top: 1px solid #444;
+    }
+    .console-entry {
+      margin-bottom: 5px;
+      border-bottom: 1px dotted #333;
+      padding-bottom: 5px;
+    }
+    .timestamp {
+      color: #888;
+      margin-right: 10px;
+    }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js/+esm",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+      "talkinghead": "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.4/modules/talkinghead.mjs"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { TalkingHead } from "talkinghead";
+
+    let head;
+
+    // Function to add messages to the console
+    function logToConsole(message, data = null) {
+      const consoleDiv = document.getElementById('console');
+      const entry = document.createElement('div');
+      entry.className = 'console-entry';
+      
+      const timestamp = document.createElement('span');
+      timestamp.className = 'timestamp';
+      timestamp.textContent = new Date().toLocaleTimeString();
+      
+      entry.appendChild(timestamp);
+      
+      const messageText = document.createElement('span');
+      messageText.textContent = message;
+      entry.appendChild(messageText);
+      
+      if (data) {
+        const dataText = document.createElement('pre');
+        dataText.textContent = JSON.stringify(data, null, 2);
+        entry.appendChild(dataText);
+      }
+      
+      consoleDiv.appendChild(entry);
+      consoleDiv.scrollTop = consoleDiv.scrollHeight; // Auto-scroll to bottom
+    }
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      const nodeAvatar = document.getElementById('avatar');
+      const nodeLoading = document.getElementById('loading');
+
+      // Instantiate TalkingHead
+      head = new TalkingHead(nodeAvatar, {
+        //ttsEndpoint: "https://eu-texttospeech.googleapis.com/v1beta1/text:synthesize",
+        //ttsApikey: "put-your-own-Google-TTS-API-key-here", // <- Change this
+        ttsEndpoint: "http://127.0.0.1:5000/google-tts",
+        lipsyncModules: ["en", "fi"],
+        cameraView: "upper",
+        backgroundColor: 'transparent'
+      });
+
+      // Load and show the avatar
+      try {
+        nodeLoading.textContent = "Loading...";
+        await head.showAvatar({
+          url: 'https://models.readyplayer.me/64bfa15f0e72c63d7c3934a6.glb?morphTargets=ARKit,Oculus+Visemes,mouthOpen,mouthSmile,eyesClosed,eyesLookUp,eyesLookDown&textureSizeLimit=1024&textureFormat=webp',
+          body: 'F',
+          avatarMood: 'neutral',
+          ttsLang: "en-GB",
+          ttsVoice: "en-GB-Standard-A",
+          lipsyncLang: 'en'
+        }, (ev) => {
+          if (ev.lengthComputable) {
+            const val = Math.min(100, Math.round(ev.loaded / ev.total * 100));
+            nodeLoading.textContent = "Loading " + val + "%";
+          }
+        });
+        nodeLoading.style.display = 'none';
+        logToConsole("Avatar loaded successfully");
+      } catch (error) {
+        console.log(error);
+        nodeLoading.textContent = error.toString();
+        logToConsole("Error loading avatar: " + error.toString());
+      }
+
+      // Start a basic HTTP server to expose an API
+      startAPIServer();
+    });
+
+    function startAPIServer() {
+      // Use a WebSocket server to interact with the HTML page
+      const server = new WebSocket('ws://127.0.0.1:8080');
+
+      server.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const text = data.text;
+          const ttsLang = data.ttsLang || "en-GB";
+          const iHeard = data.yousaid || "";
+
+          // Log received data to console
+          //logToConsole("Received message from server:", data);
+          logToConsole("I heard:", iHeard);
+
+          if (text) {
+            // Update TTS language dynamically
+            //head.setTTSLanguage(ttsLang);
+            head.speakText(text);
+            logToConsole(`Speaking text in ${ttsLang}: "${text}"`);
+          } else {
+            console.error("Text to speak is missing in the request.");
+            logToConsole("Error: Text to speak is missing in the request.");
+          }
+        } catch (error) {
+          console.error("Failed to process the incoming message:", error);
+          logToConsole("Error processing message: " + error.toString());
+        }
+      };
+
+      server.onopen = () => {
+        console.log("API server is listening on ws://127.0.0.1:8080");
+        logToConsole("Connected to WebSocket server at ws://127.0.0.1:8080");
+      };
+
+      server.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        logToConsole("WebSocket error: " + error.toString());
+      };
+
+      server.onclose = () => {
+        logToConsole("WebSocket connection closed");
+        // Attempt to reconnect after a delay
+        setTimeout(() => {
+          logToConsole("Attempting to reconnect...");
+          startAPIServer();
+        }, 5000);
+      };
+    }
+  </script>
+</head>
+
+<body>
+  <div id="background"></div>
+  <div id="avatar"></div>
+  <div id="loading"></div>
+  <div id="console"></div>
+</body>
+
+</html>
